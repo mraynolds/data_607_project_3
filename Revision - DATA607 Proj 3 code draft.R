@@ -185,5 +185,11 @@ glassdoor_data2 <- glassdoor_data2 |> mutate(
   size = factor(size, levels = size_levels)
 )
 
-# count ownership types
-glassdoor_data2 |> count(type_of_ownership)
+# eliminate -1, replace with NA}
+glassdoor_data3 <- glassdoor_data2 |> mutate(
+  type_of_ownership = na_if(type_of_ownership,"-1"),
+  type_of_ownership = na_if(type_of_ownership, "Unknown"),
+  industry = na_if(industry,"-1"),
+  industry = na_if(industry, "Unknown"),
+  sector = na_if(sector,"-1"),
+  sector = na_if(sector, "Unknown"))

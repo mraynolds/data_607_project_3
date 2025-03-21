@@ -1,0 +1,286 @@
+---
+title: "data_science_607_project_3"
+author: ""
+date: "2025-03-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(RMySQL)
+library(DBI)
+library(tidyverse)
+library(janitor)
+```
+
+```{r Connect to the MySQL database}
+con <- dbConnect(MySQL(), 
+                 dbname = "data607_database", 
+                 host = "project03.mysql.database.azure.com", 
+                 user = "project03", 
+                 password = "qL8QjT99dVBi3Q4")
+```
+
+```{r Retrieve data from the 'glassdoor_data2' table}
+db_glassdoor_data2 <- dbGetQuery(con, "SELECT * FROM glassdoor_data2")
+```
+
+```{r Select relevant columns}
+glassdoor_data2 <- db_glassdoor_data2 |> 
+  select(
+         "Job_Title",
+         "Size",
+         "company_txt",
+         "Type_of_ownership",
+         "Job_Description",
+         "Industry",
+         "Sector",
+         "Revenue",
+         "min_salary",
+         "max_salary",
+         "avg_salary",
+         "City",
+         "State",
+         "Country",
+         "Source",
+         "same_state",
+         "python_yn",
+         "r_yn",
+         "spark",
+         "aws",
+         "excel")
+```
+
+
+```{r Clean column names (convert to lowercase)}
+glassdoor_data2 <- glassdoor_data2 |> 
+  clean_names()
+```
+
+```{r Convert numeric columns from character to numeric format}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(across(c(min_salary, 
+                  max_salary, 
+                  avg_salary,
+                  same_state,
+                  python_yn, 
+                  r_yn, 
+                  spark, 
+                  aws, 
+                  excel), 
+                parse_number))
+```
+
+```{r Replace revenue value of '-1' with 'NA'}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(revenue = ifelse(revenue == "-1" | revenue == "Unknown / Non-Applicable", NA, revenue))
+```
+
+```{r Rename columns for better readability}
+glassdoor_data2 <- glassdoor_data2 |> 
+  rename("company_name" = "company_txt",
+         "python" = "python_yn",
+         "r_lang" = "r_yn")
+```
+
+```{r Categorize job titles into different job types}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(job_type = case_when(
+    grepl("engineer", job_title, ignore.case = TRUE) & 
+      grepl("scientist", job_title, ignore.case = TRUE) ~ "Engineer/Scientist",
+    grepl("engineer", job_title, ignore.case = TRUE) &
+      grepl("analyst", job_title, ignore.case = TRUE) ~ "Engineer/Analyst",
+    grepl("scientist", job_title, ignore.case = TRUE) &
+      grepl("analyst", job_title, ignore.case = TRUE) ~ "Scientist/Analyst",
+    grepl("engineer", job_title, ignore.case = TRUE) ~ "Engineer",
+    grepl("analyst", job_title, ignore.case = TRUE) |
+      grepl("analytics", job_title, ignore.case = TRUE) ~ "Analyst",  
+    grepl("scientist", job_title, ignore.case = TRUE) |
+      grepl("science", job_title, ignore.case = TRUE) ~ "Scientist", 
+    TRUE ~ NA_character_ 
+  ))
+```
+
+```{r Convert binary skill and tool indicators to logical}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(
+    same_state = as.logical(same_state),
+    python = as.logical(python),
+    r_lang = as.logical(r_lang),
+    spark = as.logical(spark),
+    aws = as.logical(aws),
+    excel = as.logical(excel)
+  )
+```
+
+```{r Convert salary figures to full values}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(min_salary = min_salary * 1000) |> 
+  mutate(max_salary = max_salary * 1000) |> 
+  mutate(avg_salary = avg_salary * 1000)
+```
+
+```{r Categorize average salary into salary ranges}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(avg_salary_range = cut(avg_salary,
+                                breaks = c(0, 
+                                           25000, 
+                                           50000, 
+                                           75000, 
+                                           100000, 
+                                           125000, 
+                                           150000, 
+                                           175000, 
+                                           200000, 
+                                           225000, 
+                                           250000, 
+                                           275000),
+                                labels = c("0-25000", 
+                                           "25000-50000", 
+                                           "50000-75000", 
+                                           "75000-100000", 
+                                           "100000-125000", 
+                                           "125000-150000", 
+                                           "150000-175000", 
+                                           "175000-200000", 
+                                           "200000-225000", 
+                                           "225000-250000", 
+                                           "250000+"),
+                                right = TRUE))
+```
+
+```{r Select and reorder columns for readability}
+glassdoor_data2 <- glassdoor_data2 |> 
+  select(
+         job_title, 
+         job_type, 
+         job_description,
+         avg_salary_range, 
+         avg_salary, 
+         min_salary, 
+         max_salary, 
+         python,
+         r_lang,
+         spark,
+         aws,
+         excel,
+         city, 
+         state, 
+         country,
+         company_name,
+         revenue,
+         size,
+         type_of_ownership,
+         industry,
+         sector
+  )
+```
+
+```{r eliminate the one nonsense job title}
+glassdoor_data2 <- glassdoor_data2 |> filter(job_title != "sg nsjx nm/.;'" )
+```
+
+```{r replace all "unknown" with NA}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(size = na_if(size,"Unknown"),
+         size = na_if(size, "-1"))
+```
+
+
+```{r create factors for avg_salary_range and revenue, then convert to factors}
+avg_salary_levels <- c("0-25000", "25000-50000", "50000-75000", 
+                       "75000-100000", "100000-125000", "125000-150000", 
+                       "150000-175000", "175000-200000", "200000-225000", 
+                       "225000-250000", "250000+")
+
+revenue_levels <- c("Less than $1 million (USD)", " $1 to $5 million (USD)", 
+                    "$5 to $10 million (USD)", " $10 to $25 million (USD)",
+                    "$25 to $50 million (USD)", "$50 to $100 million (USD)",
+                    "$100 to $500 million (USD)", "$500 million to $1 billion (USD)",
+                    "$1 to $2 billion (USD)", "$2 to $5 billion (USD)", "$5 to $10 billion (USD)",
+                    "$10+ billion (USD)")
+
+size_levels <- c("1 to 50 employees","51 to 200 employees","201 to 500 employees",
+          "501 to 1000 employees","1001 to 5000 employees", "5001 to 10000 employees",
+          "10000+ employees")
+
+glassdoor_data2 <- glassdoor_data2 |> mutate(
+  avg_salary_range = factor(avg_salary_range, levels = avg_salary_levels),
+  revenue = factor(revenue, levels = revenue_levels),
+  size = factor(size, levels = size_levels)
+)
+```
+
+```{r eliminate -1, replace with NA}
+glassdoor_data3 <- glassdoor_data2 |> mutate(
+    type_of_ownership = na_if(type_of_ownership,"-1"),
+    type_of_ownership = na_if(type_of_ownership, "Unknown"),
+    industry = na_if(industry,"-1"),
+    industry = na_if(industry, "Unknown"),
+    sector = na_if(sector,"-1"),
+    sector = na_if(sector, "Unknown"))
+```
+
+```{r}
+glassdoor_data3$python <- as.integer(glassdoor_data3$python)
+glassdoor_data3$r_lang <- as.integer(glassdoor_data3$r_lang)
+glassdoor_data3$spark <- as.integer(glassdoor_data3$spark)
+glassdoor_data3$aws <- as.integer(glassdoor_data3$aws)
+glassdoor_data3$excel <- as.integer(glassdoor_data3$excel)
+
+dbWriteTable(
+  con,
+  name = "glassdoor_clean",    # this will be the new table name in MySQL
+  value = glassdoor_data3,
+  row.names = FALSE,
+  overwrite = TRUE             # change to FALSE if you want to append
+)
+
+dbListTables(con)
+dbReadTable(con, "glassdoor_clean")
+
+```
+
+```{r}
+
+total_job_posting <-dbGetQuery(con, "
+  SELECT COUNT(*) AS total_postings
+  FROM job_postings
+")
+
+print(total_job_posting)
+
+# Example in R
+top_skills <- dbGetQuery(con, "
+  SELECT s.skill_name, COUNT(*) AS count
+  FROM job_skills js
+  JOIN skills s ON js.skill_id = s.skill_id
+  GROUP BY s.skill_name
+  ORDER BY count DESC
+
+")
+
+print (top_skills)
+
+
+```
+
+
+```{r}
+
+# Top skills per industry
+dbGetQuery(con, "
+  SELECT i.industry_name, s.skill_name, COUNT(*) AS count
+  FROM job_postings jp
+  JOIN industry i ON jp.industry_id = i.industry_id
+  JOIN job_skills js ON jp.job_id = js.job_id
+  JOIN skills s ON js.skill_id = s.skill_id
+  GROUP BY i.industry_name, s.skill_name
+  ORDER BY i.industry_name, count DESC
+")
+
+
+```

@@ -543,6 +543,8 @@ Scientist and Engineer are very close in average salary in the South region.
 
 ### Jobs By Skill Requirement
 
+Count of skills in the joblistings.
+
 ```{r skill requirements}
 skills_summary <- tidy_glassdoor |>
   filter(!is.na(job_type), !is.na(skill)) |>
@@ -553,7 +555,7 @@ skills_summary <- tidy_glassdoor |>
 
 print(skills_summary)
 ```
-
+Skills by job type.
 
 ```{r skill summary}
 skills_summary_wide <- tidy_glassdoor |>
@@ -565,6 +567,18 @@ skills_summary_wide <- tidy_glassdoor |>
   arrange(skill)
 
 print(skills_summary_wide)
+```
+A count of the number of skills listed per job. The majority of the data set onl list 1 or 2 skills. 
+
+```{r number of skills per job}
+tidy_glassdoor |> 
+  distinct() |> 
+  filter(required == TRUE) |> 
+  group_by(job_description) |> 
+  count(skill, required) |> 
+  summarize(
+    number_of_skills_per_job = n_distinct(skill)
+  ) |> count(number_of_skills_per_job)
 ```
 
 

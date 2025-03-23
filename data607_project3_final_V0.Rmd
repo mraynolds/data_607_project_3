@@ -580,7 +580,7 @@ tidy_glassdoor |>
     number_of_skills_per_job = n_distinct(skill)
   ) |> count(number_of_skills_per_job)
 ```
-
+The number of jobs requiring each skill type.
 
 ```{r job skill by job type}
 # Prepare data: Count jobs by skill + job type

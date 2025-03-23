@@ -1,0 +1,733 @@
+---
+title: "data_science_607_project_3"
+author: "Cindy Lin, Samuel Crummett, Maxfield Raynolds, William Forero "
+date: "2025-03-20"
+output: html_document
+---
+
+# Project 3 - Data Science Skills
+
+## What are the most valued data science skills?
+
+### Introduction
+
+Data is the descriptive tapestry woven through almost every part of business and our lives. As technology advances so does the collection and volume of data. This abundance of data has lead to entire sectors focused on how to manage, analyze, and communicate data.
+
+This leads to a fundamental question: What are the most valued data science skill?
+
+This project looks to explore this question through the acquisition, normalization, cleaning, and analysis of data related jobs. The goal will be to look at job postings through the lens of which data domain they specialize in: Engineering, Science or Analysis. To do this, the analysis considers salary trends, demand in the different domains, common skills and tools, and job location.
+
+This project was executed in three primary steps:
+1. Data transformation, cleaning, and normalization
+2. Data exploration and analysis
+3. A brief summation
+
+### Preparing the R enivronment
+
+The following code
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load all Required packages.
+
+```{r load packages}
+library(RMySQL)
+library(DBI)
+library(tidyverse)
+library(janitor)
+```
+
+Connect to the database.
+
+```{r Connect to the MySQL database}
+
+user <- Sys.getenv("project03")
+psw <- Sys.getenv("PROJECT03_PW")
+
+con <- dbConnect(MySQL(), 
+                 dbname = "data607_database", 
+                 host = "project03.mysql.database.azure.com", 
+                 user = user, 
+                 password = psw)
+```
+
+Acquire the dataset:
+
+This dataset was loaded to the database in advance. The original data was acquired from:
+
+https://www.kaggle.com/datasets/fahadrehman07/data-science-jobs-and-salary-glassdoor
+
+```{r Retrieve data from the 'glassdoor_data2' table}
+db_glassdoor_data2 <- dbGetQuery(con, "SELECT * FROM glassdoor_data2")
+```
+
+## Data transformation, cleaning, and normalization
+
+### Database Normalization
+
+The dataset was loaded from its original source to the database. Within the database the dataset was normalized according to the following entity-relationship diagram:
+
+![Entity-relationship diagram](erd.png)
+
+### Transformation and cleaning
+
+With the dataset acquired, the data must be transformed, cleaned and tidied so that an analysis may be performed.
+
+The code below selects the columns to be used in the clean dataset.
+
+```{r Select relevant columns}
+glassdoor_data2 <- db_glassdoor_data2 |> 
+  select(
+         "Job_Title",
+         "Size",
+         "company_txt",
+         "Type_of_ownership",
+         "Job_Description",
+         "Industry",
+         "Sector",
+         "Revenue",
+         "min_salary",
+         "max_salary",
+         "avg_salary",
+         "City",
+         "State",
+         "Country",
+         "Source",
+         "same_state",
+         "python_yn",
+         "r_yn",
+         "spark",
+         "aws",
+         "excel")
+```
+
+Then, the column headers are made uniform.
+
+```{r Clean column names (convert to lowercase)}
+glassdoor_data2 <- glassdoor_data2 |> 
+  clean_names()
+
+head(glassdoor_data2)
+```
+
+This code converts some columns to numeric columns.
+
+```{r Convert numeric columns from character to numeric format}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(across(c(min_salary, 
+                  max_salary, 
+                  avg_salary,
+                  same_state,
+                  python_yn, 
+                  r_yn, 
+                  spark, 
+                  aws, 
+                  excel), 
+                parse_number))
+
+```
+
+Then unknown values are replaced with "NA" in the revenue column.
+
+```{r Replace revenue value of '-1' with 'NA'}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(revenue = ifelse(revenue == "-1" | revenue == "Unknown / Non-Applicable", NA, revenue))
+```
+
+Several columns are renamed for readability.
+
+```{r Rename columns for better readability}
+glassdoor_data2 <- glassdoor_data2 |> 
+  rename("company_name" = "company_txt",
+         "python" = "python_yn",
+         "r_lang" = "r_yn")
+head(glassdoor_data2)
+```
+
+Job types are created using keywords from the job titles.
+
+```{r Categorize job titles into different job types}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(job_type = case_when(
+    grepl("engineer", job_title, ignore.case = TRUE) & 
+      grepl("scientist", job_title, ignore.case = TRUE) ~ "Engineer/Scientist",
+    grepl("engineer", job_title, ignore.case = TRUE) &
+      grepl("analyst", job_title, ignore.case = TRUE) ~ "Engineer/Analyst",
+    grepl("scientist", job_title, ignore.case = TRUE) &
+      grepl("analyst", job_title, ignore.case = TRUE) ~ "Scientist/Analyst",
+    grepl("engineer", job_title, ignore.case = TRUE) ~ "Engineer",
+    grepl("analyst", job_title, ignore.case = TRUE) |
+      grepl("analytics", job_title, ignore.case = TRUE) ~ "Analyst",  
+    grepl("scientist", job_title, ignore.case = TRUE) |
+      grepl("science", job_title, ignore.case = TRUE) ~ "Scientist", 
+    TRUE ~ NA_character_ 
+  ))
+
+head(glassdoor_data2)
+```
+
+The following code converts skill and tool indicators from a binary coded system to a logical system.
+
+```{r Convert binary skill and tool indicators to logical}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(
+    same_state = as.logical(same_state),
+    python = as.logical(python),
+    r_lang = as.logical(r_lang),
+    spark = as.logical(spark),
+    aws = as.logical(aws),
+    excel = as.logical(excel)
+  )
+```
+
+Salaries are converted to their full values.
+
+```{r Convert salary figures to full values}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(min_salary = min_salary * 1000) |> 
+  mutate(max_salary = max_salary * 1000) |> 
+  mutate(avg_salary = avg_salary * 1000)
+```
+
+Then an average salary range column is created based on the average salary for each job. This will allow for analysis by range and not just individual values.
+
+```{r Categorize average salary into salary ranges}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(avg_salary_range = cut(avg_salary,
+                                breaks = c(0, 
+                                           25000, 
+                                           50000, 
+                                           75000, 
+                                           100000, 
+                                           125000, 
+                                           150000, 
+                                           175000, 
+                                           200000, 
+                                           225000, 
+                                           250000, 
+                                           275000),
+                                labels = c("0-25000", 
+                                           "25000-50000", 
+                                           "50000-75000", 
+                                           "75000-100000", 
+                                           "100000-125000", 
+                                           "125000-150000", 
+                                           "150000-175000", 
+                                           "175000-200000", 
+                                           "200000-225000", 
+                                           "225000-250000", 
+                                           "250000+"),
+                                right = TRUE))
+```
+
+Columns are reordered to group related information and improve readability.
+
+```{r Select and reorder columns for readability}
+glassdoor_data2 <- glassdoor_data2 |> 
+  select(
+         job_title, 
+         job_type, 
+         job_description,
+         avg_salary_range, 
+         avg_salary, 
+         min_salary, 
+         max_salary, 
+         python,
+         r_lang,
+         spark,
+         aws,
+         excel,
+         city, 
+         state, 
+         country,
+         company_name,
+         revenue,
+         size,
+         type_of_ownership,
+         industry,
+         sector
+  )
+
+head(glassdoor_data2)
+```
+
+A lone job with an illegible title is removed.
+
+```{r eliminate the one nonsense job title}
+glassdoor_data2 <- glassdoor_data2 |> filter(job_title != "sg nsjx nm/.;'" )
+```
+
+Unknown values are replaced in company size.
+
+```{r replace all "unknown" with NA}
+glassdoor_data2 <- glassdoor_data2 |> 
+  mutate(size = na_if(size,"Unknown"),
+         size = na_if(size, "-1"))
+```
+
+Then factors are created and applied to all columns that have an implied heirarchy but not an inherent one. Again this will allow for easier sorting, ordering, and displaying during analysis.
+
+```{r create factors for avg_salary_range and revenue, then convert to factors}
+avg_salary_levels <- c("0-25000", "25000-50000", "50000-75000", 
+                       "75000-100000", "100000-125000", "125000-150000", 
+                       "150000-175000", "175000-200000", "200000-225000", 
+                       "225000-250000", "250000+")
+
+revenue_levels <- c("Less than $1 million (USD)", " $1 to $5 million (USD)", 
+                    "$5 to $10 million (USD)", " $10 to $25 million (USD)",
+                    "$25 to $50 million (USD)", "$50 to $100 million (USD)",
+                    "$100 to $500 million (USD)", "$500 million to $1 billion (USD)",
+                    "$1 to $2 billion (USD)", "$2 to $5 billion (USD)", "$5 to $10 billion (USD)",
+                    "$10+ billion (USD)")
+
+size_levels <- c("1 to 50 employees","51 to 200 employees","201 to 500 employees",
+          "501 to 1000 employees","1001 to 5000 employees", "5001 to 10000 employees",
+          "10000+ employees")
+
+glassdoor_data2 <- glassdoor_data2 |> mutate(
+  avg_salary_range = factor(avg_salary_range, levels = avg_salary_levels),
+  revenue = factor(revenue, levels = revenue_levels),
+  size = factor(size, levels = size_levels)
+)
+
+head(glassdoor_data2)
+```
+
+Assitional unknown values are replaced with "NA".
+
+```{r eliminate -1, replace with NA}
+glassdoor_data3 <- glassdoor_data2 |> mutate(
+    type_of_ownership = na_if(type_of_ownership,"-1"),
+    type_of_ownership = na_if(type_of_ownership, "Unknown"),
+    industry = na_if(industry,"-1"),
+    industry = na_if(industry, "Unknown"),
+    sector = na_if(sector,"-1"),
+    sector = na_if(sector, "Unknown"))
+
+head(glassdoor_data3)
+```
+
+
+Now we put the data in a tidy format. Pivoting the skills longer tidies the dataframe by moving the skills and tools into a single column. As they were those columns were a variable stored as a column header. This change will allow for easy and simple analysis of the skills and tools.
+
+```{r Tidying the skills}
+skills <- c("python", "r_lang", "spark", "aws", "excel")
+
+
+tidy_glassdoor <- glassdoor_data3 |>
+  pivot_longer(
+    cols = all_of(skills),
+    names_to = "skill",
+    values_to = "required"
+  )
+
+head(tidy_glassdoor)
+```
+
+
+## Data Analysis, Exploration, and Visualization
+
+### Total Jobs
+
+First lets see how many jobs are included in the dataset.
+
+```{r Total Jobs}
+tot_jobs <- tidy_glassdoor |>
+  distinct(job_title, job_description) |>
+  nrow()
+
+cat("There are", tot_jobs, "distinct jobs included in the dataset\n")
+```
+
+### Jobs By Type
+
+Next lets see how many jobs there are per Job Type.
+
+```{r Jobs by type}
+
+jobs_by_type <- tidy_glassdoor |>
+  filter(!is.na(job_type), !is.na(avg_salary)) |>
+  distinct(job_title, job_description, job_type, avg_salary) |>
+  group_by(job_type) |>
+  summarise(job_count = n(),
+            perc_of_total = round((job_count / tot_jobs),2),
+            avg_salary_type = mean(avg_salary)) |>
+  arrange(desc(job_count))
+
+print(jobs_by_type)
+```
+
+We can better see this through a visualization:
+
+```{r Visualization of # jobs by type}
+ggplot(jobs_by_type, aes(x = reorder(job_type, -job_count), y = job_count,fill = job_type)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Number of Jobs by Job Type",
+    x = "Job Type",
+    y = "Number of Jobs"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#### Observation:
+
+The dataset contains more job postings for Scientist job type than any other type. This is something we may want to take into consideration when looking at average salaries as the more postings, the more robust it will be and less susceptible to influence from outliers.
+
+It may also be an indication of demand for the job type in the market.
+
+We can explore the average salary by job type next.
+
+```{r Visualization of avg salary by type}
+ggplot(jobs_by_type, aes(x = reorder(job_type, -avg_salary_type), y = avg_salary_type, fill = job_type)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Avg Salary by Job Type",
+    x = "Job Type",
+    y = "Average Salary"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r Boxplots for jobs by type}
+avg_sal_dist <- glassdoor_data3 |>
+  filter(!is.na(job_type), !is.na(avg_salary))
+
+
+ggplot(avg_sal_dist, aes(x = job_type, y = avg_salary,fill = job_type)) +
+  geom_boxplot() +
+  labs(
+    title = "Salary Distribution by Job Type",
+    x = "Job Type",
+    y = "Average Salary"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#### Observation:
+
+We see that the Scientist category has a higher average and median salary than any other job type (both grouped and not grouped). 
+
+Of the job types that are not grouped (Analsyt vs Engineer vs Scientist), we see that Scientist has the higher average and median salary, while Analyst has a lower average and median salary.
+
+Of the job types that are grouped (Engineer/Analyst vs Engineer/Scientist vs Scientist/Analyst), we see Scientist/Analyst has the higher average and median salary, while Engineer/Analyst has the lowest average and median salary.
+
+### Jobs By Location
+
+What kind of insights can we draw from looking at the jobs location?
+
+```{r jobs by location}
+jobs_by_loc <- tidy_glassdoor |>
+  filter(!is.na(job_type), !is.na(avg_salary), !is.na(state)) |>
+  distinct(job_title, job_description, job_type,state, avg_salary) |>
+  group_by(state) |>
+  summarise(job_count_loc = n(),
+            perc_of_total = round((job_count_loc / tot_jobs),2),
+            avg_salary_loc = mean(avg_salary)) |>
+  arrange(desc(avg_salary_loc))
+
+print(jobs_by_loc)
+```
+
+Lets look at the 5 states with the most job postings
+
+```{r job postings by state}
+top_5_job_count <- jobs_by_loc |>
+  arrange(desc(job_count_loc)) |>
+  slice_head(n = 5)
+
+print(top_5_job_count)
+```
+
+What about the 5 states with the highest average salary for data related jobs
+
+```{r states with highest salary}
+top_5_job_sal <- jobs_by_loc |>
+  arrange(desc(avg_salary_loc)) |>
+  slice_head(n = 5)
+
+print(top_5_job_sal)
+```
+
+We can also explore the states with the least job postings and lowest average salaries.
+
+```{r lowest job postings by state}
+bot_5_job_count <- jobs_by_loc |>
+  arrange((job_count_loc)) |>
+  slice_head(n = 5)
+
+print(bot_5_job_count)
+```
+
+```{r lowest salary by state}
+bot_5_job_sal <- jobs_by_loc |>
+  arrange((avg_salary_loc)) |>
+  slice_head(n = 5)
+
+print(bot_5_job_sal)
+```
+
+What if we group the states into regions, and try to take a look at the trends by region
+
+```{r jobs by region}
+# Using built in state and region mappings
+state_region <- data.frame(
+  state = state.abb,
+  region = state.region
+)
+
+# DC is not included in the built in regions so this has to be put in 
+# manually since it is in our DF
+dc <- data.frame(state = "DC", region = "South")
+state_region <- bind_rows(state_region, dc)
+
+# Join in the region 
+glassdoor_region <- tidy_glassdoor |>
+  left_join(state_region, by = c("state" = "state"))
+
+
+jobs_by_region <- glassdoor_region |>
+  filter(!is.na(job_type), !is.na(avg_salary), !is.na(region)) |>
+  distinct(job_title, job_description, job_type,region, avg_salary) |>
+  group_by(region) |>
+  summarise(job_count_reg = n(),
+            perc_of_total = round((job_count_reg / tot_jobs),2),
+            avg_salary_reg = mean(avg_salary)) |>
+  arrange(desc(avg_salary_reg))
+
+print(jobs_by_region)
+
+
+
+```
+#### Observation: 
+
+We see that most of the job postings are in the West and Northeast regions. The least are in the North Central region. 
+
+Of the two regions with the most jobs, the West region has the higher average salary.
+
+Interestingly enough, even though we see that the 5 states with the most job postings are CA, MA, NY, VA, and IL, which may indicate the need/desire for these types of jobs in those states. IF we look at the 5 states with the highest average salaries (CA, IL, MA, DC, MI) NY and VA drop off the list, so even though there may be many opportunities there, the average salaries may not be as competitive in these states. 
+
+
+```{r jobs by region and type}
+jobs_by_reg_type <- glassdoor_region |>
+  filter(!is.na(job_type), !is.na(avg_salary), !is.na(region)) |>
+  distinct(job_title, job_description, job_type,region, avg_salary) |>
+  group_by(region,job_type) |>
+  summarise(job_count_reg = n(),
+            perc_of_total = round((job_count_reg / tot_jobs),2),
+            avg_salary_reg = mean(avg_salary)) |>
+  arrange(desc(avg_salary_reg))
+
+print(jobs_by_reg_type)
+```
+
+
+```{r jobs by type, salary, and region}
+ggplot(jobs_by_reg_type, aes(x = reorder(job_type, -avg_salary_reg), y = avg_salary_reg, fill = job_type)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~region) +
+  labs(
+    title = "Avg Salary by Job Type",
+    x = "Job Type",
+    y = "Average Salary"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+#### Observation: 
+
+Scientists have the highest average salary in the Northeast region. 
+
+Engineer/Scientist followed by Scientist have the highest average salaries in the West region
+
+Scientist and Engineer are very close in average salary in the South region. 
+
+
+### Jobs By Skill Requirement
+
+Count of skills in the joblistings.
+
+```{r skill requirements}
+skills_summary <- tidy_glassdoor |>
+  filter(!is.na(job_type), !is.na(skill)) |>
+  distinct(job_title, job_description, job_type,skill,required, avg_salary) |>
+  group_by(skill) |>
+  summarise(jobs_req = sum(required == TRUE, na.rm = TRUE))|>
+  arrange(desc(jobs_req))
+
+print(skills_summary)
+```
+Skills by job type.
+
+```{r skill summary}
+skills_summary_wide <- tidy_glassdoor |>
+  filter(!is.na(job_type), !is.na(skill)) |>
+  distinct(job_title, job_description, job_type, skill, required, avg_salary) |>
+  group_by(skill, job_type) |>
+  summarise(jobs_req = sum(required == TRUE, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = job_type, values_from = jobs_req, values_fill = 0) |>
+  arrange(skill)
+
+print(skills_summary_wide)
+```
+A count of the number of skills listed per job. The majority of the data set onl list 1 or 2 skills. 
+
+```{r number of skills per job}
+tidy_glassdoor |> 
+  distinct() |> 
+  filter(required == TRUE) |> 
+  group_by(job_description) |> 
+  count(skill, required) |> 
+  summarize(
+    number_of_skills_per_job = n_distinct(skill)
+  ) |> count(number_of_skills_per_job)
+```
+The number of jobs requiring each skill type.
+
+```{r job skill by job type}
+# Prepare data: Count jobs by skill + job type
+skills_by_type <- tidy_glassdoor |>
+  filter(!is.na(job_type), !is.na(skill), required == TRUE) |>
+  distinct(job_title, job_description, job_type, skill) |>
+  group_by(job_type, skill) |>
+  summarise(job_count = n(), .groups = "drop")
+
+
+ggplot(skills_by_type, aes(x = reorder(skill, -job_count), y = job_count, fill = skill)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~job_type) +
+  labs(
+    title = "Number of Jobs Requiring Each Skill by Job Type",
+    x = "Skill",
+    y = "Number of Jobs"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+```
+
+#### Observation:
+
+Generally speaking, we see that the most frequent skills required are Python and Excel. 
+
+For engineers we can see that Python and Spark are the more frequently required skills.
+
+```{r skills by salary across all job types}
+avg_salary_by_skill <- tidy_glassdoor |>
+  filter(required == TRUE, !is.na(avg_salary), !is.na(skill)) |>
+  group_by(skill) |>
+  summarise(avg_salary = round(mean(avg_salary, na.rm = TRUE), 2)) |>
+  arrange(desc(avg_salary))
+
+ggplot(avg_salary_by_skill, aes(x = reorder(skill, avg_salary), y = avg_salary, fill = skill)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Average Salary by Skill (Across All Jobs)",
+    x = "Skill",
+    y = "Average Salary"
+  ) +
+  scale_y_continuous(labels = scales::dollar) +
+  theme(legend.position = "none")
+```
+
+#### Analysis and Observations Directly from Database
+
+The following code adjusts changes the column type in the original data set and establishes a clean data set within the database.
+
+```{r creating the clean data set in the database}
+glassdoor_data3$python <- as.integer(glassdoor_data3$python)
+glassdoor_data3$r_lang <- as.integer(glassdoor_data3$r_lang)
+glassdoor_data3$spark <- as.integer(glassdoor_data3$spark)
+glassdoor_data3$aws <- as.integer(glassdoor_data3$aws)
+glassdoor_data3$excel <- as.integer(glassdoor_data3$excel)
+
+dbWriteTable(
+  con,
+  name = "glassdoor_clean",    # this will be the new table name in MySQL
+  value = glassdoor_data3,
+  row.names = FALSE,
+  overwrite = TRUE             # change to FALSE if you want to append
+)
+
+dbListTables(con)
+dbReadTable(con, "glassdoor_clean")
+
+```
+
+This data counts counts top referenced soft and hard skills directly from the database.
+
+```{r count of top skills as listed in original dataframe}
+
+
+top_skills <- dbGetQuery(con, "
+  SELECT s.skill_name, COUNT(*) AS count
+  FROM job_skills js
+  JOIN skills s ON js.skill_id = s.skill_id
+  GROUP BY s.skill_name
+  ORDER BY count DESC
+  limit 5
+
+")
+
+print (top_skills)
+
+
+```
+
+The following code lists the top skill counts by industry.
+
+```{r skills by industry}
+
+top_skill_top5_industries <- dbGetQuery(con, "
+  -- First, find the top 5 industries by number of job postings
+  WITH top_industries AS (
+    SELECT i.industry_id, i.industry_name, COUNT(*) AS posting_count
+    FROM job_postings jp
+    JOIN industry i ON jp.industry_id = i.industry_id
+    GROUP BY i.industry_id, i.industry_name
+    ORDER BY posting_count DESC
+    LIMIT 5
+  ),
+  skill_counts AS (
+    SELECT 
+      i.industry_name, 
+      s.skill_name, 
+      COUNT(*) AS count
+    FROM job_postings jp
+    JOIN industry i ON jp.industry_id = i.industry_id
+    JOIN job_skills js ON jp.job_id = js.job_id
+    JOIN skills s ON js.skill_id = s.skill_id
+    WHERE i.industry_id IN (SELECT industry_id FROM top_industries)
+    GROUP BY i.industry_name, s.skill_name
+  )
+  SELECT sc.industry_name, sc.skill_name, sc.count
+  FROM skill_counts sc
+  JOIN (
+    SELECT industry_name, MAX(count) AS max_count
+    FROM skill_counts
+    GROUP BY industry_name
+  ) maxed ON sc.industry_name = maxed.industry_name AND sc.count = maxed.max_count
+  ORDER BY sc.industry_name;
+")
+
+
+print(top_skill_top5_industries)
+
+
+```
+
+## A Brief Summation
+
+Through the acquisition, normalization, transformation, and analysis of this dataset, several key insights emerge.
+
+Among the three domains: data science, data engineering, and data analytics, data science is the most in demand, with 57% of job listings seeking a data scientist. It also offers the highest average salary at $109,911.
+
+Geographically, data jobs are most concentrated in the West and Northeast, with California, Massachusetts, and New York having the most listings. However, the highest-paying states on average are California, Massachusetts, and Washington, D.C.
+
+Regarding skill and tools, Python is the most sought-after, followed by excel, while R is rarely requested.
+
+This data set holds even more potential insights, offering valuable indicators of emerging trends in the data job market.

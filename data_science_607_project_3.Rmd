@@ -58,7 +58,7 @@ This dataset was loaded to the database in advance. The original data was acquir
 
 https://www.kaggle.com/datasets/fahadrehman07/data-science-jobs-and-salary-glassdoor
 
-```{r Retrieve data from the 'glassdoor_data2' table}
+```{r Retrieve data from the glassdoor_data2 table}
 db_glassdoor_data2 <- dbGetQuery(con, "SELECT * FROM glassdoor_data2")
 ```
 
@@ -130,7 +130,7 @@ glassdoor_data2 <- glassdoor_data2 |>
 
 Then unknown values are replaced with "NA" in the revenue column.
 
-```{r Replace revenue value of '-1' with 'NA'}
+```{r Replace revenue value of -1 with NA}
 glassdoor_data2 <- glassdoor_data2 |> 
   mutate(revenue = ifelse(revenue == "-1" | revenue == "Unknown / Non-Applicable", NA, revenue))
 ```
